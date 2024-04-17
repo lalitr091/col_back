@@ -3,6 +3,7 @@ import projectModel from "../../../models/adminModels/project.model.js";
 import AWS from "aws-sdk";
 import { onlyAlphabetsValidation } from "../../../utils/validation.js";
 import pdf from "html-pdf";
+import { promisify } from "util";
 import nodemailer from "nodemailer";
 import fs from "fs";
 import fileuploadModel from "../../../models/adminModels/fileuploadModel.js";
@@ -391,25 +392,27 @@ export const getSingleMom = async (req, res) => {
 
 export const generatePdf = async (req, res) => {
   try {
-    const project_id = req.query.project_id;
-    const mom_id = req.query.mom_id;
+    const { project_id, mom_id } = req.query;
 
-    const check_project = await projectModel.find({ project_id: project_id });
+    const check_project = await projectModel.find({ project_id });
 
-    if (check_project.length > 0) {
-      const check_mom = check_project[0].mom.filter(
-        (mom) => mom.mom_id.toString() === mom_id
-      );
+    if (check_project.length === 0) {
+      return res.status(404).json({ message: "Project Not Found" });
+    }
 
-      if (check_mom.length > 0) {
-        const momData = check_mom[0]; // Extracting the MOM data
-        const momRemarkSplit = momData.remark.split(".").filter(Boolean); // Filter to remove empty strings
-        const momRemarkHtml = momRemarkSplit
-          .map((remark) => `<li>${remark.trim()}</li>`)
-          .join("");
+    const momData = check_project[0].mom.find(mom => mom.mom_id.toString() === mom_id);
 
+    if (!momData) {
+      return res.status(404).json({ message: "MOM Not Found" });
+    }
 
-        const htmlTemplate = `
+    const momRemarkHtml = momData.remark
+      .split(".")
+      .filter(Boolean)
+      .map(remark => `<li>${remark.trim()}</li>`)
+      .join("");
+
+    const htmlTemplate = `
 <html>
   <head>
     <title>MOM Data Report</title>
@@ -501,40 +504,26 @@ export const generatePdf = async (req, res) => {
 </html>
 `;
 
-        const pdfOptions = {
-          format: "A4",
-          border: {
-            top: "1cm",
-            right: "1cm",
-            bottom: "1cm",
-            left: "1cm",
-          }
-        };
+const pdfOptions = {
+  format: "A4",
+  border: { top: "1cm", right: "1cm", bottom: "1cm", left: "1cm" }
+};
 
-        // Generate PDF  using html-pdf library and send it as an attachment in the email 
-        pdf.create(htmlTemplate, pdfOptions).toStream((err, stream) => {
-          if (err) {
-            res.status(503).send(err);
-          } else {
-            res.setHeader("Content-Type", "application/pdf");
-            stream.pipe(res);
-          }
-        });
-
-
-
-
-
-      } else {
-        responseData(res, "", 404, false, "MOM Not Found");
-      }
-    } else {
-      responseData(res, "", 404, false, "Project Not Found");
-    }
-  } catch (err) {
-    console.log(err);
-    responseData(res, "", 500, false, err.message);
+// Generate PDF asynchronously
+pdf.create(htmlTemplate, pdfOptions).toBuffer(async (err, buffer) => {
+  if (err) {
+    console.error("Error generating PDF:", err);
+    return res.status(500).json({ message: "Error generating PDF" });
   }
+
+  // Send the PDF buffer in the response
+  res.setHeader("Content-Type", "application/pdf");
+  res.send(buffer);
+});
+} catch (err) {
+console.error("Error generating PDF:", err);
+res.status(500).json({ message: "Internal Server Error" });
+}
 };
 
 
